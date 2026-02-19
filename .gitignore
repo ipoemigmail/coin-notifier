@@ -29,5 +29,8 @@
 *.swo
 *~
 
+# Runtime data
+/data/
+
 # macOS
 .DS_Store
