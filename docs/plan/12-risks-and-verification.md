@@ -10,7 +10,7 @@
 | 4 | 다수 코인 동시 수집 시 SQLite 동시 쓰기 성능 문제 | 데이터 삽입 지연 | WAL 모드 활성화; 배치 삽입; 필요 시 전용 writer 태스크 분리 |
 | 5 | Upbit WebSocket Origin 헤더 포함 시 10초당 1회 제한 | 심각한 데이터 수신 제한 | WebSocket 연결에 Origin 헤더 미포함 |
 | 6 | Binance WebSocket 24시간 자동 종료 | 예기치 않은 데이터 갭 | 23시간 경과 시 타이머로 사전 재연결 |
-| 7 | governor crate가 edition 2024와 비호환 | 빌드 실패 | 첫 빌드 시 확인; 비호환 시 간단한 token bucket 직접 구현 |
+| 7 | governor crate가 edition 2024와 비호환 | 빌드 실패 | **해결됨**: governor 0.10.4가 edition 2024와 정상 호환 확인. Upbit(초당 8회) / Binance(초당 20회) rate limiter 적용 완료 |
 | 8 | derive_more Error derive의 복잡한 에러 타입 처리 한계 | 컴파일 오류 또는 trait impl 누락 | 필요 시 수동 `impl std::error::Error`로 대체 |
 | 9 | error-stack 0.6 deprecated API (Context, Result) 실수로 사용 | 컴파일러 경고, 향후 호환성 깨짐 | derive_more를 통해 `std::error::Error`만 사용; deprecated 항목 import 금지 |
 

@@ -71,9 +71,9 @@ impl Exchange for UpbitExchange {
 ### 사용법 (동적 디스패치)
 
 ```rust
-let exchanges: Vec<Box<dyn Exchange>> = vec![
-    Box::new(UpbitExchange::new(&config)),
-    Box::new(BinanceExchange::new(&config)),
+let exchanges: Vec<Arc<dyn Exchange>> = vec![
+    Arc::new(UpbitExchange::new()),
+    Arc::new(BinanceExchange::new()),
 ];
 
 for exchange in &exchanges {
@@ -86,6 +86,22 @@ for exchange in &exchanges {
 ## Upbit 구현
 
 `src/exchange/upbit.rs`에 위치.
+
+### Rate Limiter
+
+`governor` crate의 `DefaultDirectRateLimiter`를 사용하여 REST API rate limit을 관리한다.
+
+```rust
+pub struct UpbitExchange {
+    client: reqwest::Client,
+    rate_limiter: Arc<DefaultDirectRateLimiter>,  // 초당 8회 (안전 마진)
+}
+```
+
+- `fetch_candles_page()` 호출 전 `self.rate_limiter.until_ready().await`로 대기
+- Upbit 실제 한도는 IP당 초당 10회이나, 안전 마진을 위해 8회로 설정
+- `Arc`로 래핑하여 병렬 태스크에서 공유 시에도 전체 한도를 준수
+- 기존 `sleep(150ms)` / `sleep(500ms)` 하드코딩 방식을 대체
 
 ### REST API — 캔들 데이터
 
@@ -144,6 +160,21 @@ Rate limit 응답 헤더: `Remaining-Req: group=candle; min=1800; sec=9`
 ## Binance 구현
 
 `src/exchange/binance.rs`에 위치.
+
+### Rate Limiter
+
+Upbit와 동일하게 `governor`의 `DefaultDirectRateLimiter`를 사용한다.
+
+```rust
+pub struct BinanceExchange {
+    client: reqwest::Client,
+    rate_limiter: Arc<DefaultDirectRateLimiter>,  // 초당 20회 (안전 마진)
+}
+```
+
+- `fetch_candles()` 호출 전 `self.rate_limiter.until_ready().await`로 대기
+- Binance kline 요청의 weight는 2이고, IP당 분당 ~6000 weight 한도
+- 초당 20회 = 분당 1200회 × weight 2 = 분당 2400 weight (한도의 40%)로 안전 마진 확보
 
 ### REST API — Kline 데이터
 
@@ -206,15 +237,20 @@ Rate limit 응답 헤더: `X-MBX-USED-WEIGHT-1M`
 
 앱 시작 시 실행, 코인별/타임프레임별로 `general.historical_candles` (기본 500) 캔들 수집.
 
+### 공통 전략
+- **모든 거래소의 과거 수집 태스크를 병렬로 spawn** (코인+타임프레임 조합별 1개 태스크)
+- Rate limiting은 각 Exchange 구조체 내부의 `governor` rate limiter가 자동으로 관리
+- 기존의 Upbit 전용 순차 처리 / `sleep` 하드코딩 방식을 제거하고 통합
+
 ### Upbit 전략
 - 요청당 200개씩 `to` 파라미터로 역순 페이지네이션 (최신→과거)
 - 500 캔들 = 3회 요청 (200 + 200 + 100)
-- 초당 10회 Rate limit 준수
+- rate limiter가 초당 8회로 자동 조절 (병렬 태스크 간 공유)
 
 ### Binance 전략
 - 요청당 500개(최대 1000) 씩 `startTime`으로 순방향 페이지네이션 (과거→최신)
 - 500 캔들 = 1회 요청
-- Weight limit 준수
+- rate limiter가 초당 20회로 자동 조절
 
 ### 진행률 로깅
 - `tracing::info!`로 진행률 표시 (예: "KRW-BTC 1m 캔들 수집 중: 200/500")

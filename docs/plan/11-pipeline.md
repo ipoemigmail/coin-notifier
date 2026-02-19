@@ -29,10 +29,13 @@ struct Cli {
    - create_if_missing(true)로 연결
    - sqlx 마이그레이션 실행
 5. CancellationToken 생성
-6. exchanges: Vec<Box<dyn Exchange>> 구성
+6. exchanges: Vec<Arc<dyn Exchange>> 구성
    - 설정의 활성화된 각 거래소에 대해 UpbitExchange 또는 BinanceExchange 인스턴스 생성
+   - 각 거래소는 내부에 governor rate limiter를 보유
 7. 데이터 흐름용 mpsc 채널 생성
-8. 과거 데이터 수집 태스크 spawn (거래소별, 코인별, 타임프레임별)
+8. 과거 데이터 수집 태스크 spawn (모든 거래소 병렬)
+   - 거래소별, 코인별, 타임프레임별 조합마다 tokio::spawn
+   - rate limiting은 각 Exchange 내부의 governor가 자동 관리
 9. 모든 과거 수집 태스크 완료 대기
 10. WebSocket 구독 태스크 spawn (거래소별)
 11. 분석 루프 태스크 spawn
@@ -44,13 +47,12 @@ struct Cli {
 ```
 main()
   │
-  ├─ [태스크] 과거 수집 (Upbit)
-  │    └─ 코인+타임프레임별: 500 캔들 수집 → DB 저장
+  ├─ [태스크들] 과거 수집 (모든 거래소 병렬)
+  │    └─ 거래소별 × 코인별 × 타임프레임별 조합마다 독립 spawn
+  │       └─ 500 캔들 수집 → DB 저장
+  │       └─ rate limiting은 Exchange 내부의 governor가 자동 관리
   │
-  ├─ [태스크] 과거 수집 (Binance)
-  │    └─ 코인+타임프레임별: 500 캔들 수집 → DB 저장
-  │
-  │  (WS 시작 전 과거 수집 태스크 완료 대기)
+  │  (WS 시작 전 모든 과거 수집 태스크 완료 대기)
   │
   ├─ [태스크] Upbit WebSocket
   │    └─ subscribe_ticker → mpsc::Sender<Ticker>
@@ -61,8 +63,7 @@ main()
   ├─ [태스크] 분석 루프
   │    └─ mpsc::Receiver<Ticker>
   │       각 ticker에 대해:
-  │         1. 최신 데이터를 DB에 갱신/저장
-  │         2. 일치하는 각 AlertRule에 대해:
+  │         1. 일치하는 각 AlertRule에 대해:
   │            a. DB에서 최근 캔들 조회
   │            b. 지표 계산
   │            c. 조건 평가

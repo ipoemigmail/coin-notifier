@@ -98,6 +98,26 @@ let candles = exchange
     .attach_with(|| format!("limit={limit}"))?;
 ```
 
+### 외부 에러를 change_context로 변환 (원본 체인 보존)
+
+```rust
+// 외부 라이브러리(tungstenite, reqwest 등)의 에러를 앱 에러로 변환할 때
+// Report::new(원본_에러).change_context(앱_에러)로 원본 에러 체인 보존
+let (ws_stream, _) = connect_async(WS_URL)
+    .await
+    .change_context(ExchangeError::Connection {
+        exchange: "upbit".into(),
+    })?;
+
+// 원본 에러가 없는 경우에만 Report::new(앱_에러) + attach 사용
+if !response.status().is_success() {
+    return Err(Report::new(ExchangeError::Request {
+        exchange: "binance".into(),
+    })
+    .attach(format!("HTTP status: {}", response.status())));
+}
+```
+
 ### bail! 및 ensure! 매크로
 
 ```rust
@@ -120,3 +140,9 @@ fn validate_period(period: usize) -> Result<(), Report<IndicatorError>> {
 2. `attach` / `attach_with`로 디버깅 정보 추가 (URL, 심볼, 타임스탬프 등)
 3. 에러를 절대 무시하지 않음 — 처리하거나 명시적으로 전파
 4. error-stack 0.6: `Context` trait과 `error_stack::Result`는 deprecated; `derive_more`를 통해 `std::error::Error`를 직접 사용
+5. **`map_err` 대신 `change_context` + `attach` 패턴 우선 사용**
+   - 외부 라이브러리 에러(`std::error::Error` 구현체)는 `Report::new(원본_에러).change_context(앱_에러)`로 변환하여 원본 에러 체인을 보존
+   - 추가 디버깅 정보(HTTP 상태 코드, URL 등)는 `attach`로 별도 첨부
+   - 원본 에러가 없는 경우(HTTP 상태 코드 체크 등)에만 `Report::new(앱_에러).attach(...)` 직접 생성
+   - `map_err(|e| Report::new(AppError { msg: format!("... {e}") }))` 패턴은 원본 에러 체인을 소실시키므로 지양
+6. error-stack 0.6 API 변경: `attach_printable`은 deprecated → `attach` 사용

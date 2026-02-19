@@ -42,12 +42,12 @@ edition = "2024"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "query"] }
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite-bundled", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate", "chrono"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 clap = { version = "4", features = ["derive"] }
@@ -56,7 +56,9 @@ error-stack = "0.6"
 derive_more = { version = "2", features = ["display", "error"] }
 uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
-governor = "0.8"
+governor = { version = "0.10", features = ["std"] }
+nonzero_ext = "0.3"
+tokio-util = { version = "0.7", features = ["rt"] }
 ```
 
 ## 데이터 흐름
@@ -98,3 +100,7 @@ governor = "0.8"
 - 태스크 간 통신은 `tokio::sync::mpsc` 채널 사용
 - `tokio_util::sync::CancellationToken`으로 graceful shutdown 조율
 - `tokio::signal::ctrl_c()`로 취소 트리거
+- 거래소별 REST API rate limiting은 `governor` crate의 `DefaultDirectRateLimiter`로 관리
+  - Upbit: 초당 8회 (실제 한도 10회, 안전 마진 적용)
+  - Binance: 초당 20회 (kline weight=2, 분당 ~6000 weight 한도 대비 안전 마진)
+  - rate limiter는 `Arc`로 공유되어 병렬 태스크에서도 전체 한도를 준수
