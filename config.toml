@@ -1,0 +1,114 @@
+[general]
+log_level = "info"
+log_format = "text"
+data_dir = "./data"
+historical_candles = 500
+default_cooldown_minutes = 5
+
+# ── Exchanges ─────────────────────────────────────────────────────────────────
+
+[[exchanges]]
+name = "upbit"
+enabled = true
+base_url = "https://api.upbit.com"
+ws_url = "wss://api.upbit.com/websocket/v1"
+
+[[exchanges]]
+name = "binance"
+enabled = true
+base_url = "https://api.binance.com"
+ws_url = "wss://stream.binance.com:9443"
+
+# ── Coins ─────────────────────────────────────────────────────────────────────
+
+[[coins]]
+exchange = "upbit"
+symbol = "KRW-BTC"
+timeframes = ["1m", "5m", "1h"]
+
+[[coins]]
+exchange = "upbit"
+symbol = "KRW-ETH"
+timeframes = ["1m", "5m"]
+
+[[coins]]
+exchange = "binance"
+symbol = "BTCUSDT"
+timeframes = ["1m", "5m", "1h"]
+
+[[coins]]
+exchange = "binance"
+symbol = "ETHUSDT"
+timeframes = ["1m", "5m"]
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+
+[[alerts]]
+name = "Upbit BTC RSI oversold"
+exchange = "upbit"
+symbol = "KRW-BTC"
+indicator = "rsi"
+params = { period = 14 }
+condition = "below"
+threshold = 30.0
+cooldown_minutes = 10
+
+[[alerts]]
+name = "Upbit BTC RSI overbought"
+exchange = "upbit"
+symbol = "KRW-BTC"
+indicator = "rsi"
+params = { period = 14 }
+condition = "above"
+threshold = 70.0
+cooldown_minutes = 10
+
+[[alerts]]
+name = "Upbit ETH RSI oversold"
+exchange = "upbit"
+symbol = "KRW-ETH"
+indicator = "rsi"
+params = { period = 14 }
+condition = "below"
+threshold = 30.0
+cooldown_minutes = 10
+
+[[alerts]]
+name = "Binance BTC RSI oversold"
+exchange = "binance"
+symbol = "BTCUSDT"
+indicator = "rsi"
+params = { period = 14 }
+condition = "below"
+threshold = 30.0
+cooldown_minutes = 10
+
+[[alerts]]
+name = "Binance BTC RSI overbought"
+exchange = "binance"
+symbol = "BTCUSDT"
+indicator = "rsi"
+params = { period = 14 }
+condition = "above"
+threshold = 70.0
+cooldown_minutes = 10
+
+[[alerts]]
+name = "Upbit BTC MACD cross above"
+exchange = "upbit"
+symbol = "KRW-BTC"
+indicator = "macd"
+params = { fast_period = 12, slow_period = 26, signal_period = 9 }
+condition = "cross_above"
+threshold = 0.0
+cooldown_minutes = 15
+
+[[alerts]]
+name = "Upbit BTC MACD cross below"
+exchange = "upbit"
+symbol = "KRW-BTC"
+indicator = "macd"
+params = { fast_period = 12, slow_period = 26, signal_period = 9 }
+condition = "cross_below"
+threshold = 0.0
+cooldown_minutes = 15
