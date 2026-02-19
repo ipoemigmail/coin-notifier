@@ -101,6 +101,6 @@ tokio-util = { version = "0.7", features = ["rt"] }
 - `tokio_util::sync::CancellationToken`으로 graceful shutdown 조율
 - `tokio::signal::ctrl_c()`로 취소 트리거
 - 거래소별 REST API rate limiting은 `governor` crate의 `DefaultDirectRateLimiter`로 관리
-  - Upbit: 초당 8회 (실제 한도 10회, 안전 마진 적용)
+  - Upbit: 초당 8회, burst=1 (실제 한도 10회, 요청을 ~125ms 간격으로 균일 분산)
   - Binance: 초당 20회 (kline weight=2, 분당 ~6000 weight 한도 대비 안전 마진)
   - rate limiter는 `Arc`로 공유되어 병렬 태스크에서도 전체 한도를 준수

@@ -35,7 +35,10 @@ pub struct UpbitExchange {
 
 impl UpbitExchange {
     pub fn new() -> Self {
-        let quota = Quota::per_second(NonZeroU32::new(UPBIT_REQUESTS_PER_SECOND).unwrap());
+        // Burst=1 ensures requests are evenly spaced (~125ms apart)
+        // rather than allowing 8 simultaneous requests at startup.
+        let quota = Quota::per_second(NonZeroU32::new(UPBIT_REQUESTS_PER_SECOND).unwrap())
+            .allow_burst(NonZeroU32::new(1).unwrap());
         Self {
             client: reqwest::Client::new(),
             rate_limiter: Arc::new(RateLimiter::direct(quota)),

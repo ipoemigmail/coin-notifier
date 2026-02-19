@@ -100,6 +100,8 @@ pub struct UpbitExchange {
 
 - `fetch_candles_page()` 호출 전 `self.rate_limiter.until_ready().await`로 대기
 - Upbit 실제 한도는 IP당 초당 10회이나, 안전 마진을 위해 8회로 설정
+- **burst=1로 설정**하여 요청이 ~125ms 간격으로 균일하게 분산됨
+  - burst 미제한 시 다수 job이 동시 시작하면 초기 burst로 rate limit 초과 발생
 - `Arc`로 래핑하여 병렬 태스크에서 공유 시에도 전체 한도를 준수
 - 기존 `sleep(150ms)` / `sleep(500ms)` 하드코딩 방식을 대체
 
