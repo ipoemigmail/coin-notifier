@@ -23,30 +23,20 @@ ws_url = "wss://stream.binance.com:9443"
 
 [[coins]]
 exchange = "upbit"
-symbol = "KRW-BTC"
-timeframes = ["1m", "5m", "1h"]
-
-[[coins]]
-exchange = "upbit"
-symbol = "KRW-ETH"
-timeframes = ["1m", "5m"]
-
-[[coins]]
-exchange = "binance"
-symbol = "BTCUSDT"
+symbol = "KRW-SOL"
 timeframes = ["1m", "5m", "1h"]
 
 [[coins]]
 exchange = "binance"
-symbol = "ETHUSDT"
-timeframes = ["1m", "5m"]
+symbol = "SOLUSDT"
+timeframes = ["1m", "5m", "1h"]
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
 
 [[alerts]]
-name = "Upbit BTC RSI oversold"
+name = "Upbit SOL RSI oversold"
 exchange = "upbit"
-symbol = "KRW-BTC"
+symbol = "KRW-SOL"
 indicator = "rsi"
 params = { period = 14 }
 condition = "below"
@@ -54,9 +44,9 @@ threshold = 30.0
 cooldown_minutes = 10
 
 [[alerts]]
-name = "Upbit BTC RSI overbought"
+name = "Upbit SOL RSI overbought"
 exchange = "upbit"
-symbol = "KRW-BTC"
+symbol = "KRW-SOL"
 indicator = "rsi"
 params = { period = 14 }
 condition = "above"
@@ -64,9 +54,9 @@ threshold = 70.0
 cooldown_minutes = 10
 
 [[alerts]]
-name = "Upbit ETH RSI oversold"
-exchange = "upbit"
-symbol = "KRW-ETH"
+name = "Binance SOL RSI oversold"
+exchange = "binance"
+symbol = "SOLUSDT"
 indicator = "rsi"
 params = { period = 14 }
 condition = "below"
@@ -74,19 +64,9 @@ threshold = 30.0
 cooldown_minutes = 10
 
 [[alerts]]
-name = "Binance BTC RSI oversold"
+name = "Binance SOL RSI overbought"
 exchange = "binance"
-symbol = "BTCUSDT"
-indicator = "rsi"
-params = { period = 14 }
-condition = "below"
-threshold = 30.0
-cooldown_minutes = 10
-
-[[alerts]]
-name = "Binance BTC RSI overbought"
-exchange = "binance"
-symbol = "BTCUSDT"
+symbol = "SOLUSDT"
 indicator = "rsi"
 params = { period = 14 }
 condition = "above"
@@ -94,9 +74,9 @@ threshold = 70.0
 cooldown_minutes = 10
 
 [[alerts]]
-name = "Upbit BTC MACD cross above"
+name = "Upbit SOL MACD cross above"
 exchange = "upbit"
-symbol = "KRW-BTC"
+symbol = "KRW-SOL"
 indicator = "macd"
 params = { fast_period = 12, slow_period = 26, signal_period = 9 }
 condition = "cross_above"
@@ -104,9 +84,9 @@ threshold = 0.0
 cooldown_minutes = 15
 
 [[alerts]]
-name = "Upbit BTC MACD cross below"
+name = "Upbit SOL MACD cross below"
 exchange = "upbit"
-symbol = "KRW-BTC"
+symbol = "KRW-SOL"
 indicator = "macd"
 params = { fast_period = 12, slow_period = 26, signal_period = 9 }
 condition = "cross_below"
