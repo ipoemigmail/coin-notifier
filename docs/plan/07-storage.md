@@ -110,6 +110,10 @@ INSERT OR REPLACE INTO candles (exchange, symbol, timeframe, open_time, open, hi
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ```
 
+실시간 동기화에서는 같은 `(exchange, symbol, timeframe='1m', open_time)` 키를
+반복 upsert하여 진행 중인 분 캔들을 갱신한다. 분이 바뀌면 새 키로 새 캔들이
+생성된다.
+
 ### 최근 캔들 조회
 
 ```sql

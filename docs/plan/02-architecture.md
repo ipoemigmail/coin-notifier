@@ -64,39 +64,25 @@ tokio-util = { version = "0.7", features = ["rt"] }
 ## 데이터 흐름
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        main.rs                              │
-│  CLI 파싱 → 설정 로드 → DB 초기화 → CancellationToken        │
-└──────┬──────────────────────────────────────┬───────────────┘
-       │                                      │
-       ▼                                      ▼
-┌──────────────┐                    ┌──────────────────┐
-│ 과거 데이터   │                    │ WebSocket         │
-│ 수집기        │                    │ 구독자             │
-│ (거래소별)    │                    │ (거래소별)          │
-└──────┬───────┘                    └────────┬─────────┘
-       │                                     │
-       │      mpsc::Sender<Candle/Ticker>    │
-       └──────────────┬──────────────────────┘
-                      ▼
-              ┌───────────────┐
-              │  분석 루프     │
-              │               │
-              │ 1. DB 저장    │
-              │ 2. 지표 계산  │
-              │ 3. 조건 평가  │
-              │ 4. 알림 출력  │
-              └───────┬───────┘
-                      │
-              ┌───────▼───────┐
-              │   터미널      │
-              │   알림기      │
-              └───────────────┘
+main.rs
+  ├─ REST 과거 수집 (거래소/심볼/타임프레임 병렬) ──> SQLite candles
+  ├─ WS ticker 구독 (거래소별) ──> mpsc::Sender<Ticker>
+  ├─ WS trade 구독 (거래소별) ──> mpsc::Sender<Trade>
+  │
+  ├─ 실시간 1m 캔들 동기화 루프 (mpsc::Receiver<Trade>)
+  │    └─ trade를 분 버킷으로 병합 후 SQLite candles upsert
+  │
+  └─ 분석 루프 (mpsc::Receiver<Ticker>)
+       ├─ DB에서 최근 1m 캔들 조회
+       ├─ 지표 계산 + 조건 평가 + 쿨다운 검사
+       └─ 알림 출력 + alerts_log 기록
 ```
 
 ## 동시성 모델
 
 - 각 거래소는 독립적인 `tokio::spawn` 태스크로 실행
+- 거래소별로 ticker/trade WebSocket 태스크를 각각 실행
+- trade 이벤트는 별도 동기화 태스크에서 1m 캔들로 병합되어 DB에 즉시 반영
 - 태스크 간 통신은 `tokio::sync::mpsc` 채널 사용
 - `tokio_util::sync::CancellationToken`으로 graceful shutdown 조율
 - `tokio::signal::ctrl_c()`로 취소 트리거

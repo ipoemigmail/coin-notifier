@@ -7,10 +7,12 @@ mod notifier;
 mod storage;
 mod strategy;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use derive_more::{Display, Error};
 use error_stack::{Report, ResultExt};
@@ -30,7 +32,7 @@ use indicator::ma::{Ema, Sma};
 use indicator::macd::Macd;
 use indicator::rsi::Rsi;
 use indicator::volume::VolumeMA;
-use model::{Ticker, TimeFrame};
+use model::{Candle, ExchangeKind, Ticker, TimeFrame, Trade};
 use notifier::Notifier;
 use notifier::terminal::TerminalNotifier;
 use storage::Storage;
@@ -113,9 +115,9 @@ async fn run() -> Result<(), Report<AppError>> {
         let jobs: Vec<(String, TimeFrame)> = coins_for_exchange
             .iter()
             .flat_map(|coin| {
-                coin.timeframes.iter().filter_map(|tf| {
-                    TimeFrame::from_str(tf).map(|t| (coin.symbol.clone(), t))
-                })
+                coin.timeframes
+                    .iter()
+                    .filter_map(|tf| TimeFrame::from_str(tf).map(|t| (coin.symbol.clone(), t)))
             })
             .collect();
 
@@ -149,10 +151,11 @@ async fn run() -> Result<(), Report<AppError>> {
     // ── WebSocket channels ────────────────────────────────────────────────────
     let cancel = CancellationToken::new();
     let (ticker_tx, ticker_rx) = mpsc::channel::<Ticker>(1024);
+    let (trade_tx, trade_rx) = mpsc::channel::<Trade>(4096);
 
     let mut task_handles = Vec::new();
 
-    // WebSocket ticker subscriptions
+    // WebSocket ticker/trade subscriptions
     for exchange in &exchanges {
         let exchange_kind = exchange.kind();
         let symbols: Vec<String> = config
@@ -166,20 +169,46 @@ async fn run() -> Result<(), Report<AppError>> {
             continue;
         }
 
-        let exchange = Arc::clone(exchange);
-        let tx = ticker_tx.clone();
-        let cancel_clone = cancel.clone();
+        let ticker_exchange = Arc::clone(exchange);
+        let ticker_tx_clone = ticker_tx.clone();
+        let ticker_cancel = cancel.clone();
+        let ticker_symbols = symbols.clone();
 
-        let handle = tokio::spawn(async move {
-            if let Err(e) = exchange.subscribe_ticker(&symbols, tx, cancel_clone).await {
+        let ticker_handle = tokio::spawn(async move {
+            if let Err(e) = ticker_exchange
+                .subscribe_ticker(&ticker_symbols, ticker_tx_clone, ticker_cancel)
+                .await
+            {
                 tracing::error!(error = ?e, "ticker subscription failed");
             }
         });
-        task_handles.push(handle);
+        task_handles.push(ticker_handle);
+
+        let trade_exchange = Arc::clone(exchange);
+        let trade_tx_clone = trade_tx.clone();
+        let trade_cancel = cancel.clone();
+
+        let trade_handle = tokio::spawn(async move {
+            if let Err(e) = trade_exchange
+                .subscribe_trades(&symbols, trade_tx_clone, trade_cancel)
+                .await
+            {
+                tracing::error!(error = ?e, "trade subscription failed");
+            }
+        });
+        task_handles.push(trade_handle);
     }
 
     // Drop the original sender so the receiver closes when all spawned senders drop
     drop(ticker_tx);
+    drop(trade_tx);
+
+    // Sync real-time 1m candles from trades
+    let candle_sync_handle = tokio::spawn(sync_realtime_candles_from_trades(
+        trade_rx,
+        Arc::clone(&storage),
+    ));
+    task_handles.push(candle_sync_handle);
 
     // ── Analysis loop ─────────────────────────────────────────────────────────
     let notifier: Arc<dyn Notifier> = Arc::new(TerminalNotifier);
@@ -282,6 +311,76 @@ async fn analysis_loop(
     while let Some(ticker) = rx.recv().await {
         process_ticker(&ticker, storage.as_ref(), &rules, notifier.as_ref()).await;
     }
+}
+
+async fn sync_realtime_candles_from_trades(
+    mut rx: mpsc::Receiver<Trade>,
+    storage: Arc<dyn Storage>,
+) {
+    let mut latest_candles: HashMap<(ExchangeKind, String), Candle> = HashMap::new();
+
+    while let Some(trade) = rx.recv().await {
+        let Some(candle) = merge_trade_into_minute_candle(&mut latest_candles, &trade) else {
+            continue;
+        };
+
+        if let Err(e) = storage.upsert_candles(&[candle]).await {
+            tracing::warn!(
+                error = ?e,
+                exchange = %trade.exchange,
+                symbol = %trade.symbol,
+                "failed to upsert realtime 1m candle"
+            );
+        }
+    }
+}
+
+fn merge_trade_into_minute_candle(
+    latest_candles: &mut HashMap<(ExchangeKind, String), Candle>,
+    trade: &Trade,
+) -> Option<Candle> {
+    let key = (trade.exchange, trade.symbol.clone());
+    let minute_open = minute_open_time(trade.timestamp);
+
+    match latest_candles.get_mut(&key) {
+        Some(candle) if candle.open_time < minute_open => {
+            *candle = new_minute_candle(trade, minute_open);
+            Some(candle.clone())
+        }
+        Some(candle) if candle.open_time == minute_open => {
+            candle.high = candle.high.max(trade.price);
+            candle.low = candle.low.min(trade.price);
+            candle.close = trade.price;
+            candle.volume += trade.volume;
+            Some(candle.clone())
+        }
+        Some(_) => None,
+        None => {
+            let candle = new_minute_candle(trade, minute_open);
+            latest_candles.insert(key, candle.clone());
+            Some(candle)
+        }
+    }
+}
+
+fn new_minute_candle(trade: &Trade, open_time: DateTime<Utc>) -> Candle {
+    Candle {
+        exchange: trade.exchange,
+        symbol: trade.symbol.clone(),
+        timeframe: TimeFrame::Min1,
+        open_time,
+        open: trade.price,
+        high: trade.price,
+        low: trade.price,
+        close: trade.price,
+        volume: trade.volume,
+    }
+}
+
+fn minute_open_time(timestamp: DateTime<Utc>) -> DateTime<Utc> {
+    let unix_seconds = timestamp.timestamp();
+    let bucket_seconds = unix_seconds - unix_seconds.rem_euclid(60);
+    DateTime::from_timestamp(bucket_seconds, 0).unwrap_or(timestamp)
 }
 
 async fn process_ticker(
@@ -412,5 +511,80 @@ fn build_indicator(rule: &AlertRule) -> Box<dyn Indicator> {
             tracing::warn!(indicator = %rule.indicator_name, "unknown indicator, defaulting to RSI(14)");
             Box::new(Rsi::new(14).unwrap())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::TradeSide;
+
+    fn make_trade(timestamp: i64, price: f64, volume: f64) -> Trade {
+        Trade {
+            exchange: ExchangeKind::Upbit,
+            symbol: "KRW-SOL".into(),
+            price,
+            volume,
+            side: TradeSide::Buy,
+            timestamp: DateTime::from_timestamp(timestamp, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn minute_open_time_rounds_down_to_minute() {
+        let timestamp = DateTime::from_timestamp(125, 999_000_000).unwrap();
+        assert_eq!(minute_open_time(timestamp).timestamp(), 120);
+    }
+
+    #[test]
+    fn merge_trade_updates_existing_minute_candle() {
+        let mut latest = HashMap::new();
+        let first = make_trade(180, 100.0, 1.2);
+        let second = make_trade(185, 110.0, 0.8);
+
+        let _ = merge_trade_into_minute_candle(&mut latest, &first);
+        let updated = merge_trade_into_minute_candle(&mut latest, &second).unwrap();
+
+        assert_eq!(updated.open, 100.0);
+        assert_eq!(updated.high, 110.0);
+        assert_eq!(updated.low, 100.0);
+        assert_eq!(updated.close, 110.0);
+        assert_eq!(updated.volume, 2.0);
+        assert_eq!(updated.open_time.timestamp(), 180);
+    }
+
+    #[test]
+    fn merge_trade_rolls_over_to_new_minute_candle() {
+        let mut latest = HashMap::new();
+        let first = make_trade(180, 100.0, 1.0);
+        let second = make_trade(240, 95.0, 0.5);
+
+        let _ = merge_trade_into_minute_candle(&mut latest, &first);
+        let rolled = merge_trade_into_minute_candle(&mut latest, &second).unwrap();
+
+        assert_eq!(rolled.open, 95.0);
+        assert_eq!(rolled.high, 95.0);
+        assert_eq!(rolled.low, 95.0);
+        assert_eq!(rolled.close, 95.0);
+        assert_eq!(rolled.volume, 0.5);
+        assert_eq!(rolled.open_time.timestamp(), 240);
+    }
+
+    #[test]
+    fn merge_trade_ignores_out_of_order_old_minute() {
+        let mut latest = HashMap::new();
+        let recent = make_trade(240, 100.0, 1.0);
+        let stale = make_trade(180, 90.0, 0.5);
+
+        let _ = merge_trade_into_minute_candle(&mut latest, &recent);
+        let ignored = merge_trade_into_minute_candle(&mut latest, &stale);
+
+        assert!(ignored.is_none());
+        let candle = latest
+            .get(&(ExchangeKind::Upbit, "KRW-SOL".to_string()))
+            .unwrap();
+        assert_eq!(candle.open_time.timestamp(), 240);
+        assert_eq!(candle.close, 100.0);
+        assert_eq!(candle.volume, 1.0);
     }
 }

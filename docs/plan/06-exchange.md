@@ -44,6 +44,11 @@ pub trait Exchange: Send + Sync {
 }
 ```
 
+런타임에서의 실제 사용:
+
+- `subscribe_ticker()`는 분석 루프 트리거 이벤트로 사용
+- `subscribe_trades()`는 실시간 1m 캔들 동기화 입력으로 사용
+
 ### 구현 패턴
 
 각 impl은 비동기 로직을 `Box::pin(async move { ... })`으로 감싼다:
@@ -121,6 +126,10 @@ pub struct UpbitExchange {
 - `market` (필수): 예) `KRW-BTC`
 - `count` (선택): 최대 200
 - `to` (선택): 마지막 캔들 타임스탬프
+
+응답의 `candle_date_time_utc`는 타임존 오프셋이 없는
+`YYYY-MM-DDTHH:MM:SS` 형식으로 올 수 있으므로,
+파싱 시 RFC3339 + naive UTC(`%Y-%m-%dT%H:%M:%S`)를 모두 허용한다.
 
 Rate limit 응답 헤더: `Remaining-Req: group=candle; min=1800; sec=9`
 
@@ -226,6 +235,8 @@ Rate limit 응답 헤더: `X-MBX-USED-WEIGHT-1M`
 - Ticker: `<symbol>@ticker`
 - Trade: `<symbol>@trade`
 - Kline: `<symbol>@kline_<interval>`
+
+현재 파이프라인에서는 `@ticker`와 `@trade`를 함께 사용한다.
 
 ### 재연결 전략
 

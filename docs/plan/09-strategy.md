@@ -116,18 +116,22 @@ pub async fn should_alert(
 }
 ```
 
-## 알림 파이프라인 (새 데이터 이벤트당)
+## 알림 파이프라인 (실시간 이벤트 기준)
 
 ```
-1. 새 캔들 도착 (exchange, symbol, timeframe)
-2. DB에서 최근 캔들 조회 (지표 계산에 충분한 수)
-3. 해당 (exchange, symbol)과 일치하는 각 AlertRule에 대해:
+1. 새 trade 도착 (exchange, symbol, price, volume, timestamp)
+2. trade 동기화 루프가 1m 캔들 갱신 후 DB upsert
+3. 새 ticker 도착 (exchange, symbol)
+4. DB에서 최근 1m 캔들 조회 (지표 계산에 충분한 수)
+5. 해당 (exchange, symbol)과 일치하는 각 AlertRule에 대해:
    a. rule.indicator_name + rule.indicator_params로 지표 인스턴스 생성
    b. 캔들로부터 지표 값 계산
    c. current_value (마지막)와 previous_value (끝에서 두 번째) 추출
    d. 조건 평가
    e. 트리거되고 쿨다운 통과 시 → 알림 발생
 ```
+
+현재 구현은 분석 시 타임프레임을 `TimeFrame::Min1`로 고정하여 사용한다.
 
 ## 설정에서 AlertRule 변환
 

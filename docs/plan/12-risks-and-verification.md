@@ -28,9 +28,11 @@
 | MACD (`indicator/macd.rs`) | 알려진 데이터셋 정확도; 기본 파라미터 |
 | 볼린저 밴드 (`indicator/bollinger.rs`) | 알려진 데이터셋 정확도; 밴드 폭 |
 | 거래량 (`indicator/volume.rs`) | 거래량 MA 계산; 급등 감지 |
+| Exchange 파싱 (`exchange/upbit.rs`) | timezone 없는 `candle_date_time_utc` 파싱(naive UTC) |
 | 조건 평가 (`strategy/condition.rs`) | 각 조건 타입 정상 트리거; cross 조건은 이전 값 필요; between 범위 검증 |
 | 쿨다운 로직 | 쿨다운 시간 내 재트리거 차단; 경과 후 허용 |
 | SQLite CRUD (`storage/sqlite.rs`) | 캔들 upsert + 조회; 체결 삽입; 알림 로그 + last_alert_time; upsert 중복 제거 (인메모리 `:memory:` DB) |
+| 실시간 1m 동기화 (`main.rs`) | 분 버킷 내 OHLCV 갱신; 분 rollover; out-of-order trade 무시 |
 
 ### 통합 테스트 (`#[ignore]`)
 

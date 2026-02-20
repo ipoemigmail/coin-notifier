@@ -28,18 +28,25 @@ struct Cli {
    - data_dir 없으면 생성
    - create_if_missing(true)로 연결
    - sqlx 마이그레이션 실행
-5. CancellationToken 생성
-6. exchanges: Vec<Arc<dyn Exchange>> 구성
+5. exchanges: Vec<Arc<dyn Exchange>> 구성
    - 설정의 활성화된 각 거래소에 대해 UpbitExchange 또는 BinanceExchange 인스턴스 생성
    - 각 거래소는 내부에 governor rate limiter를 보유
-7. 데이터 흐름용 mpsc 채널 생성
-8. 과거 데이터 수집 태스크 spawn (모든 거래소 병렬)
+6. 과거 데이터 수집 태스크 spawn (모든 거래소 병렬)
    - 거래소별, 코인별, 타임프레임별 조합마다 tokio::spawn
    - rate limiting은 각 Exchange 내부의 governor가 자동 관리
-9. 모든 과거 수집 태스크 완료 대기
+7. 모든 과거 수집 태스크 완료 대기
+8. CancellationToken 생성
+9. 데이터 흐름용 mpsc 채널 생성
+   - ticker 채널: `mpsc::channel::<Ticker>(1024)`
+   - trade 채널: `mpsc::channel::<Trade>(4096)`
 10. WebSocket 구독 태스크 spawn (거래소별)
-11. 분석 루프 태스크 spawn
-12. ctrl_c 대기 → cancel token → 모든 태스크 join
+   - subscribe_ticker
+   - subscribe_trades
+11. 실시간 1m 캔들 동기화 태스크 spawn
+   - trade 채널 수신 → 분 버킷 OHLCV 병합 → `upsert_candles`
+12. 분석 루프 태스크 spawn
+   - ticker 채널 수신 → DB의 최근 1m 캔들 기반 지표 계산/조건 평가
+13. ctrl_c 대기 → cancel token → 모든 태스크 join
 ```
 
 ## 태스크 구조
@@ -54,11 +61,26 @@ main()
   │
   │  (WS 시작 전 모든 과거 수집 태스크 완료 대기)
   │
-  ├─ [태스크] Upbit WebSocket
+  ├─ [태스크] Upbit WebSocket (ticker)
   │    └─ subscribe_ticker → mpsc::Sender<Ticker>
   │
-  ├─ [태스크] Binance WebSocket
+  ├─ [태스크] Upbit WebSocket (trades)
+  │    └─ subscribe_trades → mpsc::Sender<Trade>
+  │
+  ├─ [태스크] Binance WebSocket (ticker)
   │    └─ subscribe_ticker → mpsc::Sender<Ticker>
+  │
+  ├─ [태스크] Binance WebSocket (trades)
+  │    └─ subscribe_trades → mpsc::Sender<Trade>
+  │
+  ├─ [태스크] 실시간 1m 캔들 동기화 루프
+  │    └─ mpsc::Receiver<Trade>
+  │       각 trade에 대해:
+  │         a. timestamp를 분 경계로 내림
+  │         b. 동일 분이면 high/low/close/volume 갱신
+  │         c. 새 분이면 새 1m 캔들 생성
+  │         d. out-of-order 과거 분 trade는 무시
+  │         e. upsert_candles로 DB 반영
   │
   ├─ [태스크] 분석 루프
   │    └─ mpsc::Receiver<Ticker>
@@ -79,9 +101,11 @@ main()
 
 ```rust
 let (ticker_tx, ticker_rx) = tokio::sync::mpsc::channel::<Ticker>(1024);
+let (trade_tx, trade_rx) = tokio::sync::mpsc::channel::<Trade>(4096);
 
-// 각 거래소는 ticker_tx의 clone을 받음
-// 분석 루프는 ticker_rx에서 읽음
+// 각 거래소는 ticker_tx/trade_tx clone을 받아 WS 이벤트를 전송
+// 실시간 1m 캔들 동기화 루프는 trade_rx에서 읽고 DB를 갱신
+// 분석 루프는 ticker_rx에서 읽고 최신 1m 캔들로 지표를 계산
 ```
 
 ## Graceful Shutdown

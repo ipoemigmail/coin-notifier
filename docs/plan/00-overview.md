@@ -5,7 +5,8 @@
 Rust(edition 2024) + Tokio 기반으로 다음을 수행하는 CLI 애플리케이션을 구축한다:
 
 1. Upbit/Binance 거래소에서 WebSocket을 통해 실시간 코인 시세 데이터를 수집
-2. REST API를 통해 과거 캔들(OHLCV) 데이터를 수집
+   - ticker + trade 스트림을 모두 사용
+2. REST API로 과거 캔들(OHLCV)을 초기 수집하고, trade 스트림으로 1m 캔들을 실시간 동기화
 3. 기술적 분석 지표를 계산 (MVP: RSI)
 4. 사용자가 정의한 알림 조건을 평가
 5. 매매 타이밍 알림을 터미널에 출력

@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use error_stack::{Report, ResultExt};
 use futures::future::BoxFuture;
 use futures::{SinkExt, StreamExt};
@@ -131,9 +131,7 @@ impl Exchange for UpbitExchange {
                 }
 
                 let oldest_time = page.last().and_then(|c| {
-                    DateTime::parse_from_rfc3339(&c.candle_date_time_utc)
-                        .ok()
-                        .map(|dt| dt.with_timezone(&Utc))
+                    parse_upbit_utc_timestamp(&c.candle_date_time_utc)
                 });
 
                 let fetched = page.len();
@@ -411,9 +409,8 @@ struct UpbitCandle {
 
 impl UpbitCandle {
     fn into_candle(self, symbol: &str, timeframe: TimeFrame) -> Candle {
-        let open_time = DateTime::parse_from_rfc3339(&self.candle_date_time_utc)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now());
+        let open_time = parse_upbit_utc_timestamp(&self.candle_date_time_utc)
+            .unwrap_or_else(Utc::now);
 
         Candle {
             exchange: ExchangeKind::Upbit,
@@ -427,6 +424,17 @@ impl UpbitCandle {
             volume: self.candle_acc_trade_volume,
         }
     }
+}
+
+fn parse_upbit_utc_timestamp(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|| {
+            NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S")
+                .ok()
+                .map(|naive| DateTime::from_naive_utc_and_offset(naive, Utc))
+        })
 }
 
 // ── WebSocket message types ───────────────────────────────────────────────────
@@ -542,6 +550,12 @@ mod tests {
         };
         let trade2 = msg2.into_trade();
         assert_eq!(trade2.side, TradeSide::Sell);
+    }
+
+    #[test]
+    fn parse_upbit_utc_timestamp_without_timezone() {
+        let parsed = parse_upbit_utc_timestamp("2024-01-01T00:00:00").unwrap();
+        assert_eq!(parsed.timestamp(), 1704067200);
     }
 
     /// Integration test: requires network access. Run with `cargo test -- --ignored`

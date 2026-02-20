@@ -2,7 +2,7 @@
 
 ## 범위 내 (In Scope)
 
-- **데이터 수집**: Upbit/Binance WebSocket 실시간 스트림 + REST API 과거 캔들 데이터 수집
+- **데이터 수집**: Upbit/Binance WebSocket(ticker/trade) 실시간 스트림 + REST API 과거 캔들 초기 수집 + trade 기반 1m 캔들 실시간 동기화
 - **거래소 추상화**: `BoxFuture`를 사용한 `dyn Exchange` trait 기반 동적 디스패치
 - **데이터 저장**: SQLite(sqlx)에 캔들, 체결, 알림 이력 저장
 - **기술적 분석**: `Indicator` trait 기반 지표 (MVP: RSI, 이후 SMA/EMA, MACD, 볼린저 밴드, 거래량)
