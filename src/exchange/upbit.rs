@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::error::ExchangeError;
 use crate::exchange::Exchange;
-use crate::model::{Candle, ExchangeKind, Ticker, TradeSide, TimeFrame, Trade};
+use crate::model::{Candle, ExchangeKind, Ticker, TimeFrame, Trade, TradeSide};
 
 const UPBIT_BASE_URL: &str = "https://api.upbit.com";
 const UPBIT_WS_URL: &str = "wss://api.upbit.com/websocket/v1";
@@ -86,12 +86,13 @@ impl UpbitExchange {
             .attach(format!("HTTP status: {}", response.status())));
         }
 
-        let candles: Vec<UpbitCandle> = response
-            .json()
-            .await
-            .change_context(ExchangeError::ResponseParse {
-                exchange: "upbit".into(),
-            })?;
+        let candles: Vec<UpbitCandle> =
+            response
+                .json()
+                .await
+                .change_context(ExchangeError::ResponseParse {
+                    exchange: "upbit".into(),
+                })?;
 
         Ok(candles)
     }
@@ -130,9 +131,9 @@ impl Exchange for UpbitExchange {
                     break;
                 }
 
-                let oldest_time = page.last().and_then(|c| {
-                    parse_upbit_utc_timestamp(&c.candle_date_time_utc)
-                });
+                let oldest_time = page
+                    .last()
+                    .and_then(|c| parse_upbit_utc_timestamp(&c.candle_date_time_utc));
 
                 let fetched = page.len();
                 for raw in page {
@@ -227,11 +228,12 @@ async fn run_ticker_ws(
     // Use connect_async with URL string so tungstenite auto-generates
     // the required WebSocket handshake headers (sec-websocket-key, etc.).
     // Do NOT include an Origin header — it triggers Upbit's strict 1 req/10s limit.
-    let (ws_stream, _) = connect_async(UPBIT_WS_URL)
-        .await
-        .change_context(ExchangeError::Connection {
-            exchange: "upbit".into(),
-        })?;
+    let (ws_stream, _) =
+        connect_async(UPBIT_WS_URL)
+            .await
+            .change_context(ExchangeError::Connection {
+                exchange: "upbit".into(),
+            })?;
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -295,11 +297,12 @@ async fn run_trades_ws(
     tx: &mpsc::Sender<Trade>,
     cancel: &CancellationToken,
 ) -> Result<(), Report<ExchangeError>> {
-    let (ws_stream, _) = connect_async(UPBIT_WS_URL)
-        .await
-        .change_context(ExchangeError::Connection {
-            exchange: "upbit".into(),
-        })?;
+    let (ws_stream, _) =
+        connect_async(UPBIT_WS_URL)
+            .await
+            .change_context(ExchangeError::Connection {
+                exchange: "upbit".into(),
+            })?;
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -409,8 +412,8 @@ struct UpbitCandle {
 
 impl UpbitCandle {
     fn into_candle(self, symbol: &str, timeframe: TimeFrame) -> Candle {
-        let open_time = parse_upbit_utc_timestamp(&self.candle_date_time_utc)
-            .unwrap_or_else(Utc::now);
+        let open_time =
+            parse_upbit_utc_timestamp(&self.candle_date_time_utc).unwrap_or_else(Utc::now);
 
         Candle {
             exchange: ExchangeKind::Upbit,

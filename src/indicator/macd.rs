@@ -1,8 +1,8 @@
-use error_stack::{bail, Report};
+use error_stack::{Report, bail};
 
 use crate::error::IndicatorError;
 use crate::indicator::ma::Ema;
-use crate::indicator::{close_prices, Indicator};
+use crate::indicator::{Indicator, close_prices};
 use crate::model::Candle;
 
 pub struct Macd {

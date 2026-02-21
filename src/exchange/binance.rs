@@ -17,7 +17,7 @@ use tracing::{debug, info, warn};
 
 use crate::error::ExchangeError;
 use crate::exchange::Exchange;
-use crate::model::{Candle, ExchangeKind, Ticker, TradeSide, TimeFrame, Trade};
+use crate::model::{Candle, ExchangeKind, Ticker, TimeFrame, Trade, TradeSide};
 
 const BINANCE_BASE_URL: &str = "https://api.binance.com";
 const BINANCE_WS_BASE: &str = "wss://stream.binance.com:9443/stream";
@@ -94,12 +94,13 @@ impl Exchange for BinanceExchange {
                 .attach(format!("HTTP status: {}", response.status())));
             }
 
-            let raw: Vec<BinanceKlineRow> = response
-                .json()
-                .await
-                .change_context(ExchangeError::ResponseParse {
-                    exchange: "binance".into(),
-                })?;
+            let raw: Vec<BinanceKlineRow> =
+                response
+                    .json()
+                    .await
+                    .change_context(ExchangeError::ResponseParse {
+                        exchange: "binance".into(),
+                    })?;
 
             info!(
                 symbol = %symbol,
@@ -185,11 +186,12 @@ async fn run_ticker_ws(
         .collect();
     let ws_url = format!("{}?streams={}", BINANCE_WS_BASE, streams.join("/"));
 
-    let (ws_stream, _) = connect_async(&ws_url)
-        .await
-        .change_context(ExchangeError::Connection {
-            exchange: "binance".into(),
-        })?;
+    let (ws_stream, _) =
+        connect_async(&ws_url)
+            .await
+            .change_context(ExchangeError::Connection {
+                exchange: "binance".into(),
+            })?;
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -254,11 +256,12 @@ async fn run_trades_ws(
         .collect();
     let ws_url = format!("{}?streams={}", BINANCE_WS_BASE, streams.join("/"));
 
-    let (ws_stream, _) = connect_async(&ws_url)
-        .await
-        .change_context(ExchangeError::Connection {
-            exchange: "binance".into(),
-        })?;
+    let (ws_stream, _) =
+        connect_async(&ws_url)
+            .await
+            .change_context(ExchangeError::Connection {
+                exchange: "binance".into(),
+            })?;
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -315,24 +318,18 @@ async fn run_trades_ws(
 /// [open_time, open, high, low, close, volume, close_time, ...]
 #[derive(Debug, Deserialize)]
 struct BinanceKlineRow(
-    i64,    // 0: open_time (ms)
-    String, // 1: open
-    String, // 2: high
-    String, // 3: low
-    String, // 4: close
-    String, // 5: volume
-    #[allow(dead_code)]
-    i64,    // 6: close_time
-    #[allow(dead_code)]
-    String, // 7: quote asset volume
-    #[allow(dead_code)]
-    i64,    // 8: number of trades
-    #[allow(dead_code)]
-    String, // 9: taker buy base volume
-    #[allow(dead_code)]
-    String, // 10: taker buy quote volume
-    #[allow(dead_code)]
-    String, // 11: ignore
+    i64,                        // 0: open_time (ms)
+    String,                     // 1: open
+    String,                     // 2: high
+    String,                     // 3: low
+    String,                     // 4: close
+    String,                     // 5: volume
+    #[allow(dead_code)] i64,    // 6: close_time
+    #[allow(dead_code)] String, // 7: quote asset volume
+    #[allow(dead_code)] i64,    // 8: number of trades
+    #[allow(dead_code)] String, // 9: taker buy base volume
+    #[allow(dead_code)] String, // 10: taker buy quote volume
+    #[allow(dead_code)] String, // 11: ignore
 );
 
 impl BinanceKlineRow {
@@ -348,8 +345,7 @@ impl BinanceKlineRow {
                 })
         };
 
-        let open_time =
-            DateTime::from_timestamp_millis(self.0).unwrap_or_else(Utc::now);
+        let open_time = DateTime::from_timestamp_millis(self.0).unwrap_or_else(Utc::now);
 
         Ok(Candle {
             exchange: ExchangeKind::Binance,

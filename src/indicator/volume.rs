@@ -1,7 +1,7 @@
-use error_stack::{bail, Report};
+use error_stack::{Report, bail};
 
 use crate::error::IndicatorError;
-use crate::indicator::{volumes, Indicator};
+use crate::indicator::{Indicator, volumes};
 use crate::model::Candle;
 
 /// Volume Moving Average — simple average of trading volume over a period.

@@ -1,9 +1,12 @@
+mod backtest;
 mod config;
 mod error;
 mod exchange;
 mod indicator;
 mod model;
 mod notifier;
+mod signal_input;
+mod signal_model;
 mod storage;
 mod strategy;
 
@@ -13,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use derive_more::{Display, Error};
 use error_stack::{Report, ResultExt};
 use tokio::sync::mpsc;
@@ -58,6 +61,38 @@ struct Cli {
     /// Path to the TOML configuration file
     #[arg(short, long, default_value = "config.toml")]
     config: String,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run real-time signal watcher
+    Live,
+    /// Run backtest commands
+    Backtest {
+        #[command(subcommand)]
+        command: Option<BacktestCommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BacktestCommand {
+    /// Run historical backtest and save result into SQLite
+    Run,
+    /// Show backtest result summary from SQLite
+    Report {
+        /// Specific run id to inspect
+        #[arg(long)]
+        run_id: Option<String>,
+        /// Number of runs to list when --run-id is omitted
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Number of trades to show for --run-id detail mode
+        #[arg(long, default_value_t = 20)]
+        trades_limit: usize,
+    },
 }
 
 #[tokio::main]
@@ -74,21 +109,148 @@ async fn run() -> Result<(), Report<AppError>> {
 
     init_tracing(&config);
 
-    // ── Storage ───────────────────────────────────────────────────────────────
-    let data_dir = &config.general.data_dir;
-    std::fs::create_dir_all(data_dir)
-        .change_context(AppError::Storage)
-        .attach_with(|| format!("data_dir: {data_dir}"))?;
+    match cli.command.unwrap_or(Command::Live) {
+        Command::Live => run_live(&config).await,
+        Command::Backtest { command } => match command.unwrap_or(BacktestCommand::Run) {
+            BacktestCommand::Run => run_backtest(&config).await,
+            BacktestCommand::Report {
+                run_id,
+                limit,
+                trades_limit,
+            } => run_backtest_report(&config, run_id, limit, trades_limit).await,
+        },
+    }
+}
 
-    let db_path = format!("{data_dir}/coin-notifier.db");
-    let storage: Arc<dyn Storage> = Arc::new(
-        SqliteStorage::open(Path::new(&db_path))
-            .await
-            .change_context(AppError::Storage)?,
+async fn run_backtest(config: &AppConfig) -> Result<(), Report<AppError>> {
+    let storage = open_storage(config).await?;
+    let output = backtest::run(config, storage.as_ref())
+        .await
+        .map_err(|e| Report::new(AppError::Runtime).attach(e))?;
+
+    info!(
+        run_id = %output.run.run_id,
+        model = %output.run.model_name,
+        symbol = %output.run.symbol,
+        trades = output.run.trade_count,
+        trade_rows = output.trades.len(),
+        final_equity = output.run.final_equity,
+        total_return_pct = output.run.total_return_pct,
+        max_drawdown_pct = output.run.max_drawdown_pct,
+        win_rate_pct = output.run.win_rate_pct,
+        "backtest finished"
     );
 
-    // ── Exchanges ─────────────────────────────────────────────────────────────
-    let exchanges: Vec<Arc<dyn Exchange>> = build_exchanges(&config);
+    println!(
+        "run_id={} trades={} final_equity={:.2} return={:.2}% mdd={:.2}% win_rate={:.2}%",
+        output.run.run_id,
+        output.run.trade_count,
+        output.run.final_equity,
+        output.run.total_return_pct,
+        output.run.max_drawdown_pct,
+        output.run.win_rate_pct
+    );
+
+    Ok(())
+}
+
+async fn run_backtest_report(
+    config: &AppConfig,
+    run_id: Option<String>,
+    limit: usize,
+    trades_limit: usize,
+) -> Result<(), Report<AppError>> {
+    let storage = open_storage(config).await?;
+
+    if let Some(run_id) = run_id {
+        let run = storage
+            .get_backtest_run(&run_id)
+            .await
+            .change_context(AppError::Storage)?;
+
+        let Some(run) = run else {
+            println!("no backtest run found for run_id={run_id}");
+            return Ok(());
+        };
+
+        println!(
+            "run_id={} model={} exchange={} symbol={} timeframe={} trades={} final_equity={:.2} return={:.2}% mdd={:.2}% win_rate={:.2}%",
+            run.run_id,
+            run.model_name,
+            run.exchange,
+            run.symbol,
+            run.timeframe,
+            run.trade_count,
+            run.final_equity,
+            run.total_return_pct,
+            run.max_drawdown_pct,
+            run.win_rate_pct
+        );
+
+        let trades = storage
+            .list_backtest_trades(&run.run_id, trades_limit)
+            .await
+            .change_context(AppError::Storage)?;
+
+        if trades.is_empty() {
+            println!("no trades stored for run_id={}", run.run_id);
+            return Ok(());
+        }
+
+        for trade in trades {
+            println!(
+                "exit_time={} entry={:.4} exit={:.4} qty={:.6} net_pnl={:.4} fee={:.4} reason={}",
+                trade.exit_time,
+                trade.entry_price,
+                trade.exit_price,
+                trade.quantity,
+                trade.net_pnl,
+                trade.fee_paid,
+                trade.reason
+            );
+        }
+
+        return Ok(());
+    }
+
+    let runs = storage
+        .list_backtest_runs(limit)
+        .await
+        .change_context(AppError::Storage)?;
+
+    if runs.is_empty() {
+        println!("no backtest runs found");
+        return Ok(());
+    }
+
+    for run in runs {
+        println!(
+            "run_id={} created_at={} model={} exchange={} symbol={} timeframe={} trades={} return={:.2}% mdd={:.2}% final_equity={:.2}",
+            run.run_id,
+            run.created_at,
+            run.model_name,
+            run.exchange,
+            run.symbol,
+            run.timeframe,
+            run.trade_count,
+            run.total_return_pct,
+            run.max_drawdown_pct,
+            run.final_equity
+        );
+    }
+
+    Ok(())
+}
+
+async fn run_live(config: &AppConfig) -> Result<(), Report<AppError>> {
+    let storage = open_storage(config).await?;
+
+    match config.live.risk.max_entries_per_position {
+        Some(limit) => info!(max_entries_per_position = limit, "live risk policy loaded"),
+        None => info!("live risk policy loaded: unlimited entries"),
+    }
+
+    let exchanges: Vec<Arc<dyn Exchange>> = build_exchanges(config);
 
     if exchanges.is_empty() {
         tracing::warn!("no exchanges enabled; nothing to do");
@@ -96,7 +258,7 @@ async fn run() -> Result<(), Report<AppError>> {
     }
 
     // ── Rules ─────────────────────────────────────────────────────────────────
-    let rules: Arc<Vec<AlertRule>> = Arc::new(AlertRule::from_config(&config));
+    let rules: Arc<Vec<AlertRule>> = Arc::new(AlertRule::from_config(config));
     let historical_limit = config.general.historical_candles;
 
     // ── Historical data fetch ─────────────────────────────────────────────────
@@ -234,6 +396,21 @@ async fn run() -> Result<(), Report<AppError>> {
 
     info!("shutdown complete");
     Ok(())
+}
+
+async fn open_storage(config: &AppConfig) -> Result<Arc<dyn Storage>, Report<AppError>> {
+    let data_dir = &config.general.data_dir;
+    std::fs::create_dir_all(data_dir)
+        .change_context(AppError::Storage)
+        .attach_with(|| format!("data_dir: {data_dir}"))?;
+
+    let db_path = format!("{data_dir}/coin-notifier.db");
+    let storage: Arc<dyn Storage> = Arc::new(
+        SqliteStorage::open(Path::new(&db_path))
+            .await
+            .change_context(AppError::Storage)?,
+    );
+    Ok(storage)
 }
 
 fn init_tracing(config: &AppConfig) {

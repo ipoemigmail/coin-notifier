@@ -142,6 +142,40 @@ pub struct Trade {
     pub timestamp: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BacktestRun {
+    pub run_id: String,
+    pub model_name: String,
+    pub exchange: ExchangeKind,
+    pub symbol: String,
+    pub timeframe: TimeFrame,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub initial_capital: f64,
+    pub final_equity: f64,
+    pub total_return_pct: f64,
+    pub max_drawdown_pct: f64,
+    pub win_rate_pct: f64,
+    pub trade_count: usize,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BacktestTrade {
+    pub run_id: String,
+    pub exchange: ExchangeKind,
+    pub symbol: String,
+    pub entry_time: DateTime<Utc>,
+    pub exit_time: DateTime<Utc>,
+    pub entry_price: f64,
+    pub exit_price: f64,
+    pub quantity: f64,
+    pub gross_pnl: f64,
+    pub net_pnl: f64,
+    pub fee_paid: f64,
+    pub reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

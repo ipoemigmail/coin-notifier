@@ -5,8 +5,6 @@ data_dir = "./data"
 historical_candles = 500
 default_cooldown_minutes = 5
 
-# ── Exchanges ─────────────────────────────────────────────────────────────────
-
 [[exchanges]]
 name = "upbit"
 enabled = true
@@ -19,8 +17,6 @@ enabled = true
 base_url = "https://api.binance.com"
 ws_url = "wss://stream.binance.com:9443"
 
-# ── Coins ─────────────────────────────────────────────────────────────────────
-
 [[coins]]
 exchange = "upbit"
 symbol = "KRW-SOL"
@@ -30,8 +26,6 @@ timeframes = ["1m", "5m", "1h"]
 exchange = "binance"
 symbol = "SOLUSDT"
 timeframes = ["1m", "5m", "1h"]
-
-# ── Alerts ────────────────────────────────────────────────────────────────────
 
 [[alerts]]
 name = "Upbit SOL RSI oversold"
@@ -53,42 +47,36 @@ condition = "above"
 threshold = 70.0
 cooldown_minutes = 10
 
-[[alerts]]
-name = "Binance SOL RSI oversold"
-exchange = "binance"
-symbol = "SOLUSDT"
-indicator = "rsi"
+[[inputs]]
+name = "rsi_14"
+kind = "rsi"
 params = { period = 14 }
-condition = "below"
-threshold = 30.0
-cooldown_minutes = 10
 
-[[alerts]]
-name = "Binance SOL RSI overbought"
-exchange = "binance"
-symbol = "SOLUSDT"
-indicator = "rsi"
-params = { period = 14 }
-condition = "above"
-threshold = 70.0
-cooldown_minutes = 10
+[[models]]
+name = "rsi-reversion"
+kind = "rsi_reversion"
+params = { input = "rsi_14", oversold = 30.0, overbought = 70.0 }
 
-[[alerts]]
-name = "Upbit SOL MACD cross above"
+[backtest]
 exchange = "upbit"
 symbol = "KRW-SOL"
-indicator = "macd"
-params = { fast_period = 12, slow_period = 26, signal_period = 9 }
-condition = "cross_above"
-threshold = 0.0
-cooldown_minutes = 15
+timeframe = "1m"
+model = "rsi-reversion"
+start_time = "1970-01-01T00:00:00Z"
+end_time = "2100-01-01T00:00:00Z"
+initial_capital = 1000000
+entry_size_percent = 10
 
-[[alerts]]
-name = "Upbit SOL MACD cross below"
-exchange = "upbit"
-symbol = "KRW-SOL"
-indicator = "macd"
-params = { fast_period = 12, slow_period = 26, signal_period = 9 }
-condition = "cross_below"
-threshold = 0.0
-cooldown_minutes = 15
+[backtest.costs]
+slippage_bps = 10
+
+[backtest.costs.fee_bps_overrides]
+upbit = 5
+binance = 10
+
+[backtest.risk]
+max_entries_per_position = 3
+cooldown_bars = 3
+
+[live.risk]
+# Omit max_entries_per_position for unlimited (current policy)

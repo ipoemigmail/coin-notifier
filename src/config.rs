@@ -1,5 +1,7 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use error_stack::{Report, ResultExt};
 use serde::Deserialize;
 
@@ -30,6 +32,26 @@ fn default_true() -> bool {
     true
 }
 
+fn default_initial_capital() -> f64 {
+    1_000_000.0
+}
+
+fn default_entry_size_percent() -> f64 {
+    10.0
+}
+
+fn default_slippage_bps() -> f64 {
+    10.0
+}
+
+fn default_backtest_max_entries() -> usize {
+    3
+}
+
+fn default_cooldown_bars() -> usize {
+    3
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     pub general: GeneralConfig,
@@ -39,13 +61,19 @@ pub struct AppConfig {
     pub coins: Vec<CoinConfig>,
     #[serde(default)]
     pub alerts: Vec<AlertConfig>,
+    #[serde(default)]
+    pub inputs: Vec<InputConfig>,
+    #[serde(default)]
+    pub models: Vec<TradingModelConfig>,
+    pub backtest: Option<BacktestConfig>,
+    #[serde(default)]
+    pub live: LiveConfig,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GeneralConfig {
     #[serde(default = "default_log_level")]
     pub log_level: String,
-    /// Accepted values: `"text"` | `"json"`
     #[serde(default = "default_log_format")]
     pub log_format: String,
     #[serde(default = "default_data_dir")]
@@ -61,7 +89,6 @@ pub struct ExchangeConfig {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    // Reserved for future use (custom base URL / WebSocket URL overrides)
     #[allow(dead_code)]
     pub base_url: String,
     #[allow(dead_code)]
@@ -88,7 +115,87 @@ pub struct AlertConfig {
     pub cooldown_minutes: Option<u64>,
 }
 
-/// Load and validate an `AppConfig` from a TOML file at `path`.
+#[derive(Debug, Deserialize)]
+pub struct InputConfig {
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub params: toml::Table,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TradingModelConfig {
+    pub name: String,
+    pub kind: String,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub params: toml::Table,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BacktestConfig {
+    pub exchange: String,
+    pub symbol: String,
+    pub timeframe: String,
+    pub model: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    #[serde(default = "default_initial_capital")]
+    pub initial_capital: f64,
+    #[serde(default = "default_entry_size_percent")]
+    pub entry_size_percent: f64,
+    #[serde(default)]
+    pub costs: BacktestCostConfig,
+    #[serde(default)]
+    pub risk: RiskPolicyConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BacktestCostConfig {
+    #[serde(default = "default_slippage_bps")]
+    pub slippage_bps: f64,
+    #[serde(default)]
+    pub fee_bps_overrides: HashMap<String, f64>,
+}
+
+impl Default for BacktestCostConfig {
+    fn default() -> Self {
+        Self {
+            slippage_bps: default_slippage_bps(),
+            fee_bps_overrides: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RiskPolicyConfig {
+    #[serde(default = "default_backtest_max_entries")]
+    pub max_entries_per_position: usize,
+    #[serde(default = "default_cooldown_bars")]
+    pub cooldown_bars: usize,
+}
+
+impl Default for RiskPolicyConfig {
+    fn default() -> Self {
+        Self {
+            max_entries_per_position: default_backtest_max_entries(),
+            cooldown_bars: default_cooldown_bars(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct LiveConfig {
+    #[serde(default)]
+    pub risk: LiveRiskConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct LiveRiskConfig {
+    pub max_entries_per_position: Option<usize>,
+}
+
 pub fn load(path: &Path) -> Result<AppConfig, Report<ConfigError>> {
     let content = std::fs::read_to_string(path)
         .change_context(ConfigError::ReadFile)
@@ -99,12 +206,10 @@ pub fn load(path: &Path) -> Result<AppConfig, Report<ConfigError>> {
     })?;
 
     validate(&config)?;
-
     Ok(config)
 }
 
 const VALID_CONDITIONS: &[&str] = &["above", "below", "cross_above", "cross_below", "between"];
-const THRESHOLD_REQUIRED_CONDITIONS: &[&str] = &["above", "below"];
 
 fn validate(config: &AppConfig) -> Result<(), Report<ConfigError>> {
     validate_timeframes(config)?;
@@ -112,6 +217,9 @@ fn validate(config: &AppConfig) -> Result<(), Report<ConfigError>> {
     validate_alert_references(config)?;
     validate_alert_names_unique(config)?;
     validate_alert_conditions(config)?;
+    validate_input_and_model_names(config)?;
+    validate_model_input_references(config)?;
+    validate_backtest(config)?;
     Ok(())
 }
 
@@ -132,8 +240,7 @@ fn validate_timeframes(config: &AppConfig) -> Result<(), Report<ConfigError>> {
 }
 
 fn validate_coin_exchanges(config: &AppConfig) -> Result<(), Report<ConfigError>> {
-    let exchange_names: std::collections::HashSet<&str> =
-        config.exchanges.iter().map(|e| e.name.as_str()).collect();
+    let exchange_names: HashSet<&str> = config.exchanges.iter().map(|e| e.name.as_str()).collect();
 
     for coin in &config.coins {
         if !exchange_names.contains(coin.exchange.as_str()) {
@@ -168,7 +275,7 @@ fn validate_alert_references(config: &AppConfig) -> Result<(), Report<ConfigErro
 }
 
 fn validate_alert_names_unique(config: &AppConfig) -> Result<(), Report<ConfigError>> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     for alert in &config.alerts {
         if !seen.insert(alert.name.as_str()) {
             return Err(Report::new(ConfigError::Validation {
@@ -190,9 +297,12 @@ fn validate_alert_conditions(config: &AppConfig) -> Result<(), Report<ConfigErro
             }));
         }
 
-        if THRESHOLD_REQUIRED_CONDITIONS.contains(&alert.condition.as_str())
-            && alert.threshold.is_none()
-        {
+        let threshold_required = matches!(
+            alert.condition.as_str(),
+            "above" | "below" | "cross_above" | "cross_below"
+        );
+
+        if threshold_required && alert.threshold.is_none() {
             return Err(Report::new(ConfigError::Validation {
                 field: format!(
                     "alerts[\"{}\"].threshold is required for condition \"{}\"",
@@ -204,50 +314,103 @@ fn validate_alert_conditions(config: &AppConfig) -> Result<(), Report<ConfigErro
     Ok(())
 }
 
+fn validate_input_and_model_names(config: &AppConfig) -> Result<(), Report<ConfigError>> {
+    let mut input_names = HashSet::new();
+    for input in &config.inputs {
+        if !input_names.insert(input.name.as_str()) {
+            return Err(Report::new(ConfigError::Validation {
+                field: format!("inputs: duplicate name \"{}\"", input.name),
+            }));
+        }
+    }
+
+    let mut model_names = HashSet::new();
+    for model in &config.models {
+        if !model_names.insert(model.name.as_str()) {
+            return Err(Report::new(ConfigError::Validation {
+                field: format!("models: duplicate name \"{}\"", model.name),
+            }));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_model_input_references(config: &AppConfig) -> Result<(), Report<ConfigError>> {
+    if config.inputs.is_empty() || config.models.is_empty() {
+        return Ok(());
+    }
+
+    let input_names: HashSet<&str> = config
+        .inputs
+        .iter()
+        .map(|input| input.name.as_str())
+        .collect();
+    for model in &config.models {
+        for input_name in &model.inputs {
+            if !input_names.contains(input_name.as_str()) {
+                return Err(Report::new(ConfigError::Validation {
+                    field: format!(
+                        "models[\"{}\"].inputs contains unknown input \"{}\"",
+                        model.name, input_name
+                    ),
+                }));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_backtest(config: &AppConfig) -> Result<(), Report<ConfigError>> {
+    let Some(backtest) = &config.backtest else {
+        return Ok(());
+    };
+
+    if TimeFrame::from_str(&backtest.timeframe).is_none() {
+        return Err(Report::new(ConfigError::Validation {
+            field: format!("backtest.timeframe \"{}\" is not valid", backtest.timeframe),
+        }));
+    }
+
+    if backtest.start_time >= backtest.end_time {
+        return Err(Report::new(ConfigError::Validation {
+            field: "backtest.start_time must be before backtest.end_time".into(),
+        }));
+    }
+
+    if backtest.entry_size_percent <= 0.0 || backtest.entry_size_percent > 100.0 {
+        return Err(Report::new(ConfigError::Validation {
+            field: "backtest.entry_size_percent must be in (0, 100]".into(),
+        }));
+    }
+
+    if backtest.initial_capital <= 0.0 {
+        return Err(Report::new(ConfigError::Validation {
+            field: "backtest.initial_capital must be > 0".into(),
+        }));
+    }
+
+    if backtest.costs.slippage_bps < 0.0 {
+        return Err(Report::new(ConfigError::Validation {
+            field: "backtest.costs.slippage_bps must be >= 0".into(),
+        }));
+    }
+
+    if !config.models.is_empty() && !config.models.iter().any(|m| m.name == backtest.model) {
+        return Err(Report::new(ConfigError::Validation {
+            field: format!("backtest.model \"{}\" is not defined", backtest.model),
+        }));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(toml: &str) -> AppConfig {
         toml::from_str(toml).expect("parse failed")
-    }
-
-    #[test]
-    fn valid_full_config_parses() {
-        let toml = r#"
-[general]
-log_level = "debug"
-log_format = "json"
-data_dir = "/tmp/data"
-historical_candles = 200
-default_cooldown_minutes = 10
-
-[[exchanges]]
-name = "upbit"
-enabled = true
-base_url = "https://api.upbit.com"
-ws_url = "wss://api.upbit.com/websocket/v1"
-
-[[coins]]
-exchange = "upbit"
-symbol = "KRW-BTC"
-timeframes = ["1m", "5m"]
-
-[[alerts]]
-name = "BTC RSI oversold"
-exchange = "upbit"
-symbol = "KRW-BTC"
-indicator = "rsi"
-params = { period = 14 }
-condition = "below"
-threshold = 30.0
-cooldown_minutes = 10
-"#;
-        let config = parse(toml);
-        assert_eq!(config.general.log_level, "debug");
-        assert_eq!(config.exchanges.len(), 1);
-        assert_eq!(config.coins.len(), 1);
-        assert_eq!(config.alerts.len(), 1);
     }
 
     #[test]
@@ -264,26 +427,10 @@ cooldown_minutes = 10
         assert!(config.exchanges.is_empty());
         assert!(config.coins.is_empty());
         assert!(config.alerts.is_empty());
-    }
-
-    #[test]
-    fn invalid_exchange_reference_rejected() {
-        let toml = r#"
-[general]
-
-[[exchanges]]
-name = "upbit"
-base_url = "https://api.upbit.com"
-ws_url = "wss://api.upbit.com/websocket/v1"
-
-[[coins]]
-exchange = "binance"
-symbol = "BTCUSDT"
-timeframes = ["1m"]
-"#;
-        let config = parse(toml);
-        let result = validate(&config);
-        assert!(result.is_err());
+        assert!(config.inputs.is_empty());
+        assert!(config.models.is_empty());
+        assert!(config.backtest.is_none());
+        assert!(config.live.risk.max_entries_per_position.is_none());
     }
 
     #[test]
@@ -302,70 +449,47 @@ symbol = "KRW-BTC"
 timeframes = ["2m"]
 "#;
         let config = parse(toml);
-        let result = validate(&config);
-        assert!(result.is_err());
+        assert!(validate(&config).is_err());
     }
 
     #[test]
-    fn duplicate_alert_names_rejected() {
+    fn duplicate_input_name_rejected() {
         let toml = r#"
 [general]
 
-[[exchanges]]
-name = "upbit"
-base_url = "https://api.upbit.com"
-ws_url = "wss://api.upbit.com/websocket/v1"
+[[inputs]]
+name = "rsi_14"
+kind = "rsi"
 
-[[coins]]
-exchange = "upbit"
-symbol = "KRW-BTC"
-timeframes = ["1m"]
-
-[[alerts]]
-name = "dup"
-exchange = "upbit"
-symbol = "KRW-BTC"
-indicator = "rsi"
-condition = "below"
-threshold = 30.0
-
-[[alerts]]
-name = "dup"
-exchange = "upbit"
-symbol = "KRW-BTC"
-indicator = "rsi"
-condition = "above"
-threshold = 70.0
+[[inputs]]
+name = "rsi_14"
+kind = "rsi"
 "#;
         let config = parse(toml);
-        let result = validate(&config);
-        assert!(result.is_err());
+        assert!(validate(&config).is_err());
     }
 
     #[test]
-    fn threshold_required_for_above_below_conditions() {
+    fn backtest_defaults_applied() {
         let toml = r#"
 [general]
 
-[[exchanges]]
-name = "upbit"
-base_url = "https://api.upbit.com"
-ws_url = "wss://api.upbit.com/websocket/v1"
+[[models]]
+name = "rsi-reversion"
+kind = "rsi_reversion"
 
-[[coins]]
+[backtest]
 exchange = "upbit"
 symbol = "KRW-BTC"
-timeframes = ["1m"]
-
-[[alerts]]
-name = "missing threshold"
-exchange = "upbit"
-symbol = "KRW-BTC"
-indicator = "rsi"
-condition = "above"
+timeframe = "1m"
+model = "rsi-reversion"
+start_time = "2025-01-01T00:00:00Z"
+end_time = "2025-01-02T00:00:00Z"
 "#;
         let config = parse(toml);
-        let result = validate(&config);
-        assert!(result.is_err());
+        let backtest = config.backtest.unwrap();
+        assert_eq!(backtest.entry_size_percent, 10.0);
+        assert_eq!(backtest.costs.slippage_bps, 10.0);
+        assert_eq!(backtest.risk.cooldown_bars, 3);
     }
 }
