@@ -1,5 +1,10 @@
 # Coin Notifier Platform Redesign Plan
 
+## Implementation Snapshot
+
+This redesign has been implemented in the current codebase and is now the
+active baseline for model/backtest workflows.
+
 ## Objective
 
 Build a model-driven trading platform that is easy to extend in three areas:
@@ -42,6 +47,10 @@ Build a model-driven trading platform that is easy to extend in three areas:
 
 ### Core Modules
 
+- `src/main.rs`
+  - `live` command for stream-based monitoring
+  - `backtest run` to execute and persist a historical run
+  - `backtest report` to query saved runs and trades
 - `src/signal_input.rs`
   - `SignalInput` trait
   - Config-driven input builders (`rsi`, `sma`, `ema`, `macd`, `bollinger`, `volume_ma`, `close`)
@@ -64,6 +73,7 @@ Build a model-driven trading platform that is easy to extend in three areas:
 5. Evaluate model per bar (signal at `t`)
 6. Fill at `t+1 open`
 7. Save run summary + trade logs
+8. Query reports later via `backtest report`
 
 ## Config Contract
 
@@ -75,6 +85,13 @@ New sections are now available:
 - `[backtest.costs]`: slippage/fee override
 - `[backtest.risk]`: max entries and cooldown bars
 - `[live.risk]`: unlimited by omitting `max_entries_per_position`
+
+Important defaults currently applied by code:
+
+- `backtest.entry_size_percent = 10`
+- `backtest.costs.slippage_bps = 10`
+- `backtest.risk.max_entries_per_position = 3`
+- `backtest.risk.cooldown_bars = 3`
 
 ## Storage Contract
 
@@ -91,6 +108,9 @@ New sections are now available:
 
 - `get_candles_in_range(...)`
 - `save_backtest_results(...)`
+- `list_backtest_runs(...)`
+- `get_backtest_run(...)`
+- `list_backtest_trades(...)`
 
 ## Verification Strategy
 
@@ -112,3 +132,11 @@ cargo build --release
   - `backtest run` (new model platform flow)
   - `backtest report` (query stored run summaries/trades)
 - Backtest output is printed to terminal and persisted in SQLite.
+
+Example commands:
+
+```bash
+cargo run -- --config config.toml backtest run
+cargo run -- --config config.toml backtest report --limit 10
+cargo run -- --config config.toml backtest report --run-id <RUN_ID> --trades-limit 20
+```
